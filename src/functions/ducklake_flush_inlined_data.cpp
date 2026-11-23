@@ -323,7 +323,7 @@ unique_ptr<LogicalOperator> DuckLakeDataFlusher::GenerateFlushCommand() {
 	    [&](DuckLakeFunctionInfo &read_info) {
 		    read_info.scan_type = DuckLakeScanType::SCAN_FOR_FLUSH;
 		    read_info.flush_sort_order_sql = sort_order_sql;
-		    return make_uniq<DuckLakeMultiFileList>(read_info, inlined_table);
+		    return make_uniq<DuckLakeMultiFileList>(context, read_info, inlined_table);
 	    },
 	    copy);
 

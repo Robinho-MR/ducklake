@@ -515,7 +515,7 @@ void DuckLakeDelete::FlushDelete(DuckLakeTransaction &transaction, ClientContext
 	delete_file.data_file_path = filename;
 	delete_file.data_file_id = data_file_info.file_id;
 	// check if the file already has deletes
-	auto existing_delete_data = delete_map->GetDeleteData(filename);
+	auto existing_delete_data = delete_map->GetDeleteData(context, filename);
 
 	if (!existing_delete_data &&
 	    TryDropFullyDeletedFile(transaction, delete_file, data_file_info, sorted_deletes.size())) {
@@ -642,6 +642,25 @@ string DuckLakeDelete::GetName() const {
 InsertionOrderPreservingMap<string> DuckLakeDelete::ParamsToString() const {
 	InsertionOrderPreservingMap<string> result;
 	result["Table Name"] = table.name.GetIdentifierName();
+	return result;
+}
+
+optional_ptr<DuckLakeDeleteData> DuckLakeDeleteMap::GetDeleteData(ClientContext &context, const string &filename) {
+	lock_guard<mutex> guard(lock);
+	auto entry = delete_data_map.find(filename);
+	if (entry != delete_data_map.end()) {
+		return entry->second.get();
+	}
+	auto file_entry = file_map.find(filename);
+	if (cleared_files.count(filename) || file_entry == file_map.end() || file_entry->second.delete_file.path.empty()) {
+		return nullptr;
+	}
+	auto scan_result = DuckLakeDeleteFilter::ScanDeleteFile(context, file_entry->second.delete_file);
+	auto delete_data = make_shared_ptr<DuckLakeDeleteData>();
+	delete_data->deleted_rows = std::move(scan_result.deleted_rows);
+	delete_data->snapshot_ids = std::move(scan_result.snapshot_ids);
+	auto result = delete_data.get();
+	delete_data_map.emplace(filename, std::move(delete_data));
 	return result;
 }
 

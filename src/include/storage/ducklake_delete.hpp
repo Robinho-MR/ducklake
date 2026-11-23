@@ -97,18 +97,13 @@ struct DuckLakeDeleteMap {
 
 	DuckLakeFileListExtendedEntry GetExtendedFileInfo(const string &filename);
 
-	optional_ptr<DuckLakeDeleteData> GetDeleteData(const string &filename) {
-		lock_guard<mutex> guard(lock);
-		auto entry = delete_data_map.find(filename);
-		if (entry == delete_data_map.end()) {
-			return nullptr;
-		}
-		return entry->second.get();
-	}
+	//! The deletes of a file that are stored in its delete file - read the first time they are asked for
+	optional_ptr<DuckLakeDeleteData> GetDeleteData(ClientContext &context, const string &filename);
 
 	void ClearDeletes(const string &filename) {
 		lock_guard<mutex> guard(lock);
 		delete_data_map.erase(filename);
+		cleared_files.insert(filename);
 	}
 
 	void AddDeleteData(const string &filename, shared_ptr<DuckLakeDeleteData> delete_data) {
@@ -123,6 +118,8 @@ private:
 	mutex lock;
 	unordered_map<string, DuckLakeFileListExtendedEntry> file_map;
 	unordered_map<string, shared_ptr<DuckLakeDeleteData>> delete_data_map;
+	//! Files whose deletes are overwritten - they are not read from their delete file again
+	unordered_set<string> cleared_files;
 };
 
 class DuckLakeDelete : public PhysicalOperator {

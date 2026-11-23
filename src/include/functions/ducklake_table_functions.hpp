@@ -80,6 +80,12 @@ public:
 	DuckLakeTableInfoFunction();
 };
 
+//! Reads a delete file (parquet or puffin) - the function a scan names to read the deletes of a data file
+class DuckLakeReadDeleteFileFunction {
+public:
+	static TableFunctionSet GetFunctions();
+};
+
 class DuckLakeTableInsertionsFunction {
 public:
 	static TableFunctionSet GetFunctions();

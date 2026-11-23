@@ -228,7 +228,7 @@ shared_ptr<MultiFileList> DuckLakeMultiFileReader::CreateFileList(ClientContext 
 		transaction_local_data = transaction.GetTransactionLocalInlinedData(read_info.table_id);
 	}
 	auto result =
-	    make_shared_ptr<DuckLakeMultiFileList>(read_info, std::move(transaction_local_files), transaction_local_data);
+	    make_shared_ptr<DuckLakeMultiFileList>(context, read_info, std::move(transaction_local_files), transaction_local_data);
 	return std::move(result);
 }
 
@@ -335,34 +335,8 @@ ReaderInitializeType DuckLakeMultiFileReader::InitializeReader(MultiFileReaderDa
 				delete_filter->Initialize(*inlined_deletes);
 				reader.deletion_filter = std::move(delete_filter);
 			}
-		} else if (!file_entry.delete_file.path.empty() || !file_entry.inlined_file_deletions.empty()) {
-			auto delete_filter = make_uniq<DuckLakeDeleteFilter>();
-			if (!file_entry.delete_file.path.empty()) {
-				delete_filter->Initialize(context, file_entry.delete_file);
-			}
-			if (delete_map && !file_entry.delete_file.path.empty()) {
-				auto delete_data_copy = make_shared_ptr<DuckLakeDeleteData>(*delete_filter->delete_data);
-				delete_map->AddDeleteData(reader.GetFileName(), std::move(delete_data_copy));
-			}
-			// Apply inlined file deletions (stored in metadata database instead of delete file)
-			if (!file_entry.inlined_file_deletions.empty()) {
-				DuckLakeInlinedDataDeletes inlined_deletes;
-				inlined_deletes.rows = file_entry.inlined_file_deletions;
-				delete_filter->Initialize(inlined_deletes);
-			}
-			auto txn = read_info.GetTransaction();
-			bool has_local_delete = read_info.include_local_changes && txn &&
-			                        txn->HasLocalDeleteForFile(read_info.table_id, reader.GetFileName());
-			if (read_info.scan_type == DuckLakeScanType::SCAN_INSERTIONS) {
-				// only the deletes of the snapshot that inserted the rows
-				delete_filter->SetSnapshotFilter(file_entry.snapshot_id.GetIndex());
-			} else if (!has_local_delete) {
-				// We only set snapshot filter if this file is not a current running transaction
-				// OW, we are guaranteed to be on the latest valid snapshot
-				delete_filter->SetSnapshotFilter(read_info.snapshot.snapshot_id);
-			}
-			reader.deletion_filter = std::move(delete_filter);
 		}
+		// the deletes of a data file are described by its options - the scan applies them
 	} else {
 		// delete scan - we need to read ONLY the entries that have been deleted
 		if (file_entry.data_type == DuckLakeDataType::DATA_FILE) {
@@ -688,7 +662,8 @@ MultiFileReaderVirtualColumnBinding DuckLakeMultiFileReader::GetVirtualColumnExp
 		auto &options = reader_data.file_to_be_opened.extended_info->options;
 		auto entry = options.find("snapshot_id");
 		if (entry == options.end()) {
-			throw InternalException("snapshot_id not found for reading snapshot_id column");
+			// a NULL option is not carried by the file list
+			return MultiFileReaderVirtualColumnBinding(Value(LogicalType::BIGINT));
 		}
 		return MultiFileReaderVirtualColumnBinding(entry->second);
 	}
