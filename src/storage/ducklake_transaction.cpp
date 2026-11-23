@@ -966,7 +966,7 @@ Connection &DuckLakeTransaction::GetConnection() {
 	lock_guard<mutex> lock(connection_lock);
 	if (!connection) {
 		connection = make_uniq<Connection>(db);
-		connection->context->registered_state->GetOrCreate<DuckLakeInternalConnectionState>(
+		connection->context->GetContext().GetRegisteredState().GetOrCreate<DuckLakeInternalConnectionState>(
 		    DuckLakeInternalConnectionState::KEY);
 		auto caller_context = context.lock();
 		if (caller_context) {
