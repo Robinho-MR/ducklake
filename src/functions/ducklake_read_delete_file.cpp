@@ -9,8 +9,8 @@
 namespace duckdb {
 
 //! The delete function reads a DuckLake delete file - a parquet positional delete file or a puffin deletion vector -
-//! and returns the deleted positions and the snapshots that deleted them. A scan lists it as the
-//! "delete_file_function" of a data file whose rows were deleted
+//! and returns the deleted positions and the snapshots that deleted them. A scan runs it in the "delete_query" of a
+//! data file whose rows were deleted
 struct DuckLakeReadDeleteFileData : public TableFunctionData {
 	DuckLakeFileData delete_file;
 };
@@ -52,7 +52,7 @@ static unique_ptr<FunctionData> DuckLakeReadDeleteFileBind(ClientContext &contex
 	}
 	names.emplace_back("pos");
 	return_types.emplace_back(LogicalType::BIGINT);
-	names.emplace_back("_ducklake_internal_snapshot_id");
+	names.emplace_back("snapshot_id");
 	return_types.emplace_back(LogicalType::BIGINT);
 	return std::move(result);
 }

@@ -477,8 +477,8 @@ void DuckLakeFileListData::AddDeleteOptions(const DuckLakeFileListEntry &file_en
 		delete_options["validate_external_file_cache"] = Value::BOOLEAN(false);
 		delete_options["etag"] = Value("");
 		delete_options["last_modified"] = Value::TIMESTAMP(timestamp_t(0));
-		options["delete_file"] = delete_info.ToValue();
-		options["delete_file_function"] = Value("ducklake_read_delete_file");
+		options["delete_query"] =
+		    Value("SELECT * FROM ducklake_read_delete_file([" + delete_info.ToValue().ToSQLString() + "])");
 	}
 	if (!file_entry.inlined_file_deletions.empty()) {
 		vector<Value> rows;
