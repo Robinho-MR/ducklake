@@ -458,7 +458,24 @@ DuckLakeTableEntry &DuckLakeFileListData::GetTable() {
 
 void DuckLakeFileListData::AddDeleteOptions(const DuckLakeFileListEntry &file_entry,
                                             ExtendedOpenFileInfo &extended_info) const {
-	auto &options = extended_info.options;
+	if (file_entry.delete_file.path.empty() && file_entry.inlined_file_deletions.empty()) {
+		return;
+	}
+	// the snapshot up to which the deletes of the delete file apply
+	optional_idx snapshot_filter;
+	if (read_info.scan_type == DuckLakeScanType::SCAN_INSERTIONS) {
+		// only the deletes of the snapshot that inserted the rows
+		snapshot_filter = file_entry.snapshot_id.GetIndex();
+	} else {
+		auto transaction = read_info.GetTransaction();
+		bool has_local_delete = read_info.include_local_changes && transaction &&
+		                        transaction->HasLocalDeleteForFile(read_info.table_id, file_entry.file.path);
+		if (!has_local_delete) {
+			// only if this file is not part of a running transaction we are on the latest valid snapshot
+			snapshot_filter = read_info.snapshot.snapshot_id;
+		}
+	}
+	vector<string> queries;
 	if (!file_entry.delete_file.path.empty()) {
 		auto &delete_file = file_entry.delete_file;
 		OpenFileInfo delete_info(delete_file.path);
@@ -477,31 +494,21 @@ void DuckLakeFileListData::AddDeleteOptions(const DuckLakeFileListEntry &file_en
 		delete_options["validate_external_file_cache"] = Value::BOOLEAN(false);
 		delete_options["etag"] = Value("");
 		delete_options["last_modified"] = Value::TIMESTAMP(timestamp_t(0));
-		options["delete_query"] =
-		    Value("SELECT * FROM ducklake_read_delete_file([" + delete_info.ToValue().ToSQLString() + "])");
+		auto query = "SELECT pos FROM ducklake_read_delete_file([" + delete_info.ToValue().ToSQLString() + "])";
+		if (snapshot_filter.IsValid()) {
+			query += " WHERE coalesce(snapshot_id, 0) <= " + to_string(snapshot_filter.GetIndex());
+		}
+		queries.push_back(std::move(query));
 	}
 	if (!file_entry.inlined_file_deletions.empty()) {
-		vector<Value> rows;
+		// inlined deletes apply in every snapshot
+		string rows;
 		for (auto &row : file_entry.inlined_file_deletions) {
-			rows.push_back(Value::UBIGINT(row));
+			rows += (rows.empty() ? "" : ", ") + to_string(row);
 		}
-		options["deleted_rows"] = Value::LIST(LogicalType::UBIGINT, std::move(rows));
+		queries.push_back("SELECT unnest([" + rows + "]::BIGINT[]) AS pos");
 	}
-	if (file_entry.delete_file.path.empty() && file_entry.inlined_file_deletions.empty()) {
-		return;
-	}
-	if (read_info.scan_type == DuckLakeScanType::SCAN_INSERTIONS) {
-		// only the deletes of the snapshot that inserted the rows
-		options["delete_snapshot_filter"] = Value::UBIGINT(file_entry.snapshot_id.GetIndex());
-		return;
-	}
-	auto transaction = read_info.GetTransaction();
-	bool has_local_delete = read_info.include_local_changes && transaction &&
-	                        transaction->HasLocalDeleteForFile(read_info.table_id, file_entry.file.path);
-	if (!has_local_delete) {
-		// only if this file is not part of a running transaction we are on the latest valid snapshot
-		options["delete_snapshot_filter"] = Value::UBIGINT(read_info.snapshot.snapshot_id);
-	}
+	extended_info.options["delete_query"] = Value(StringUtil::Join(queries, " UNION ALL "));
 }
 
 OpenFileInfo DuckLakeFileListData::GetFile(idx_t i) const {
