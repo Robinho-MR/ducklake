@@ -494,24 +494,25 @@ void DuckLakeFileListData::AddDeleteOptions(const DuckLakeFileListEntry &file_en
 		delete_options["validate_external_file_cache"] = Value::BOOLEAN(false);
 		delete_options["etag"] = Value("");
 		delete_options["last_modified"] = Value::TIMESTAMP(timestamp_t(0));
-		auto query = "SELECT pos FROM ducklake_read_delete_file([" + delete_info.ToValue().ToSQLString() + "])";
+		auto query = StringUtil::Format("SELECT pos FROM ducklake_read_delete_file([%s])",
+		                                delete_info.ToValue().ToSQLString());
 		if (snapshot_filter.IsValid()) {
-			query += " WHERE coalesce(snapshot_id, 0) <= " + to_string(snapshot_filter.GetIndex());
+			query += StringUtil::Format(" WHERE coalesce(snapshot_id, 0) <= %d", snapshot_filter.GetIndex());
 		}
 		queries.push_back(std::move(query));
 	}
 	if (!file_entry.inlined_file_deletions.empty()) {
 		// inlined deletes apply in every snapshot
-		string rows;
+		vector<string> rows;
 		for (auto &row : file_entry.inlined_file_deletions) {
-			rows += (rows.empty() ? "" : ", ") + to_string(row);
+			rows.push_back(to_string(row));
 		}
-		queries.push_back("SELECT unnest([" + rows + "]::BIGINT[]) AS pos");
+		queries.push_back(StringUtil::Format("SELECT unnest([%s]::BIGINT[]) AS pos", StringUtil::Join(rows, ", ")));
 	}
 	// the rows of the file that are not deleted
-	extended_info.options["row_id_query"] = Value("SELECT row_id FROM __file_row_ids ANTI JOIN (" +
-	                                              StringUtil::Join(queries, " UNION ALL ") +
-	                                              ") AS deletes(pos) ON row_id = pos");
+	extended_info.options["filter_query"] =
+	    Value(StringUtil::Format("SELECT row_id FROM file_row_ids ANTI JOIN (%s) AS deletes(pos) ON row_id = pos",
+	                             StringUtil::Join(queries, " UNION ALL ")));
 }
 
 OpenFileInfo DuckLakeFileListData::GetFile(idx_t i) const {

@@ -9,7 +9,7 @@
 namespace duckdb {
 
 //! The delete function reads a DuckLake delete file - a parquet positional delete file or a puffin deletion vector -
-//! and returns the deleted positions and the snapshots that deleted them. A scan runs it in the "row_id_query" of a
+//! and returns the deleted positions and the snapshots that deleted them. A scan runs it in the "filter_query" of a
 //! data file whose rows were deleted
 struct DuckLakeReadDeleteFileData : public TableFunctionData {
 	DuckLakeFileData delete_file;
