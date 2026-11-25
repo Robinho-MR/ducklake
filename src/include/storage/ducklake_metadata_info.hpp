@@ -415,6 +415,8 @@ struct DuckLakeFileListEntry {
 	DuckLakeDataType data_type = DuckLakeDataType::DATA_FILE;
 	//! The data file id
 	DataFileIndex file_id;
+	//! The number of rows in the data file, 0 when not known
+	idx_t row_count = 0;
 	//! Inlined file deletions (row positions that have been deleted and stored in the metadata database)
 	set<idx_t> inlined_file_deletions;
 	//! Column min/max values for runtime filter pushdown
