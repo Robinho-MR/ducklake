@@ -508,7 +508,10 @@ void DuckLakeFileListData::AddDeleteOptions(const DuckLakeFileListEntry &file_en
 		}
 		queries.push_back("SELECT unnest([" + rows + "]::BIGINT[]) AS pos");
 	}
-	extended_info.options["delete_query"] = Value(StringUtil::Join(queries, " UNION ALL "));
+	// the rows of the file that are not deleted
+	extended_info.options["row_id_query"] = Value("SELECT row_id FROM __file_row_ids ANTI JOIN (" +
+	                                              StringUtil::Join(queries, " UNION ALL ") +
+	                                              ") AS deletes(pos) ON row_id = pos");
 }
 
 OpenFileInfo DuckLakeFileListData::GetFile(idx_t i) const {
