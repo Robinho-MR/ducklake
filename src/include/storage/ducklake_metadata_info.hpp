@@ -415,14 +415,12 @@ struct DuckLakeFileListEntry {
 	DuckLakeDataType data_type = DuckLakeDataType::DATA_FILE;
 	//! The data file id
 	DataFileIndex file_id;
-	//! The number of rows in the data file, 0 when not known
-	idx_t row_count = 0;
 	//! Inlined file deletions (row positions that have been deleted and stored in the metadata database)
 	set<idx_t> inlined_file_deletions;
 	//! Column min/max values for runtime filter pushdown
 	unordered_map<idx_t, DuckLakeFileColumnStats> column_min_max;
-	//! The rows of committed inlined data, when they are read before the file list
-	shared_ptr<DuckLakeCommittedInlinedRows> inlined_rows;
+	//! The id of the rows of committed inlined data, when they are read before the file list
+	optional_idx committed_rows_id;
 };
 
 struct DuckLakeDeleteScanEntry {

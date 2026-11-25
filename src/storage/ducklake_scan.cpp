@@ -292,6 +292,20 @@ shared_ptr<DuckLakeTransaction> DuckLakeFunctionInfo::GetTransaction() {
 	return result;
 }
 
+idx_t DuckLakeFunctionInfo::AddCommittedInlinedRows(shared_ptr<DuckLakeCommittedInlinedRows> rows) {
+	lock_guard<mutex> guard(committed_rows_lock);
+	committed_rows.push_back(std::move(rows));
+	return committed_rows.size() - 1;
+}
+
+shared_ptr<DuckLakeCommittedInlinedRows> DuckLakeFunctionInfo::GetCommittedInlinedRows(idx_t id) {
+	lock_guard<mutex> guard(committed_rows_lock);
+	if (id >= committed_rows.size()) {
+		throw InternalException("Unknown committed inlined rows id %d", id);
+	}
+	return committed_rows[id];
+}
+
 bool DuckLakeFunctionInfo::CanUseGlobalStats() {
 	if (scan_type != DuckLakeScanType::SCAN_TABLE) {
 		return false;

@@ -60,14 +60,14 @@ public:
 	bool CanUseGlobalStats() const;
 	//! Whether filters can prune files by their stats
 	bool SupportsFilterPushdown() const;
-	bool IsDeleteScan() const;
-	const DuckLakeDeleteScanEntry &GetDeleteScanEntry(idx_t file_idx);
 	static DuckLakeFileData GetDeleteData(const DuckLakeDataFile &file);
 	static DuckLakeFileData GetDeleteData(const DuckLakeDeleteFile &delete_file);
 
 private:
 	//! The options that describe the deleted rows of a data file - read by the core scan
 	void AddDeleteOptions(const DuckLakeFileListEntry &file_entry, ExtendedOpenFileInfo &extended_info) const;
+	//! The options that describe the rows that were deleted from a data file - for scans of deletions
+	void AddDeleteScanOptions(const DuckLakeDeleteScanEntry &scan, ExtendedOpenFileInfo &extended_info) const;
 	void ApplyLocalChanges(DuckLakeTransaction &transaction) const;
 	void GetFilesForTable() const;
 	//! Read the committed files, and the committed inlined rows before them when each metadata query commits
@@ -182,12 +182,6 @@ public:
 	}
 	bool SupportsFilterPushdown() const {
 		return Data().SupportsFilterPushdown();
-	}
-	bool IsDeleteScan() const {
-		return Data().IsDeleteScan();
-	}
-	const DuckLakeDeleteScanEntry &GetDeleteScanEntry(idx_t file_idx) {
-		return Data().GetDeleteScanEntry(file_idx);
 	}
 	static DuckLakeFileData GetDeleteData(const DuckLakeDataFile &file) {
 		return DuckLakeFileListData::GetDeleteData(file);

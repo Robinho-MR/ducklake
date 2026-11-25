@@ -111,9 +111,6 @@ public:
 
 private:
 	shared_ptr<BaseFileReader> TryCreateInlinedDataReader(const OpenFileInfo &file);
-	//! Gather per-row snapshot_id values using the file positions of the scanned rows
-	void GatherDeletionScanSnapshots(BaseFileReader &reader, const Vector &file_row_numbers, Vector &snapshot_vector,
-	                                 idx_t count) const;
 
 private:
 	unique_ptr<MultiFileColumnDefinition> row_id_column;
