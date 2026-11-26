@@ -26,15 +26,14 @@
 namespace duckdb {
 
 DuckLakeFileListData::DuckLakeFileListData(DuckLakeFunctionInfo &read_info,
-                                             vector<DuckLakeDataFile> transaction_local_files_p,
-                                             shared_ptr<DuckLakeInlinedData> transaction_local_data_p,
-                                             unique_ptr<FilterPushdownInfo> filter_info_p)
+                                           vector<DuckLakeDataFile> transaction_local_files_p,
+                                           shared_ptr<DuckLakeInlinedData> transaction_local_data_p,
+                                           unique_ptr<FilterPushdownInfo> filter_info_p)
     : read_info(read_info), read_file_list(false), transaction_local_files(std::move(transaction_local_files_p)),
       transaction_local_data(std::move(transaction_local_data_p)), filter_info(std::move(filter_info_p)) {
 }
 
-DuckLakeFileListData::DuckLakeFileListData(DuckLakeFunctionInfo &read_info,
-                                             vector<DuckLakeFileListEntry> files_to_scan)
+DuckLakeFileListData::DuckLakeFileListData(DuckLakeFunctionInfo &read_info, vector<DuckLakeFileListEntry> files_to_scan)
     : read_info(read_info), files(std::move(files_to_scan)), read_file_list(true) {
 }
 
@@ -47,14 +46,14 @@ static DuckLakeFileListEntry InlinedDataEntry(const DuckLakeInlinedTableInfo &in
 }
 
 DuckLakeFileListData::DuckLakeFileListData(DuckLakeFunctionInfo &read_info,
-                                             const DuckLakeInlinedTableInfo &inlined_table)
+                                           const DuckLakeInlinedTableInfo &inlined_table)
     : read_info(read_info), read_file_list(true) {
 	files.push_back(InlinedDataEntry(inlined_table));
 	inlined_data_tables.push_back(inlined_table);
 }
 
 optional_ptr<const DuckLakeFieldId> DuckLakeFileListData::ResolveFilterField(const Expression &subject,
-                                                                              column_t column_id) const {
+                                                                             column_t column_id) const {
 	if (IsVirtualColumn(column_id)) {
 		return nullptr;
 	}
@@ -81,7 +80,7 @@ optional_ptr<const DuckLakeFieldId> DuckLakeFileListData::ResolveFilterField(con
 }
 
 unique_ptr<DuckLakeFilterNode> DuckLakeFileListData::GetColumnFilterNode(column_t column_id, const Expression &expr,
-                                                                          const LogicalType &column_type) const {
+                                                                         const LogicalType &column_type) const {
 	auto subject = DuckLakeUtil::GetFilterSubject(expr);
 	if (subject) {
 		if (!DuckLakeUtil::IsStructExtract(*subject)) {
@@ -117,7 +116,7 @@ unique_ptr<DuckLakeFilterNode> DuckLakeFileListData::GetColumnFilterNode(column_
 }
 
 unique_ptr<DuckLakeFilterNode> DuckLakeFileListData::GetFilterNode(column_t column_id,
-                                                                    unique_ptr<TableFilter> filter) const {
+                                                                   unique_ptr<TableFilter> filter) const {
 	if (IsVirtualColumn(column_id)) {
 		return nullptr;
 	}
@@ -134,7 +133,7 @@ unique_ptr<DuckLakeFilterNode> DuckLakeFileListData::GetFilterNode(column_t colu
 }
 
 unique_ptr<DuckLakeFilterNode> DuckLakeFileListData::GetExpressionFilterNode(MultiFilePushdownInfo &info,
-                                                                              const Expression &expr) const {
+                                                                             const Expression &expr) const {
 	auto subject = DuckLakeUtil::GetFilterSubject(expr);
 	if (!subject) {
 		return nullptr;
@@ -170,7 +169,7 @@ unique_ptr<DuckLakeFilterNode> DuckLakeFileListData::GetExpressionFilterNode(Mul
 }
 
 void DuckLakeFileListData::AddFilterToPushdownInfo(FilterPushdownInfo &pushdown_info, column_t column_id,
-                                                    unique_ptr<TableFilter> filter) const {
+                                                   unique_ptr<TableFilter> filter) const {
 	auto node = GetFilterNode(column_id, std::move(filter));
 	if (node) {
 		AddFilterNodeToPushdownInfo(pushdown_info, *node);
@@ -178,7 +177,7 @@ void DuckLakeFileListData::AddFilterToPushdownInfo(FilterPushdownInfo &pushdown_
 }
 
 void DuckLakeFileListData::AddFilterNodeToPushdownInfo(FilterPushdownInfo &pushdown_info,
-                                                        DuckLakeFilterNode &node) const {
+                                                       DuckLakeFilterNode &node) const {
 	if (node.type == DuckLakeFilterNodeType::CONJUNCTION_AND) {
 		// every conjunct has to hold, so each can be filtered on separately
 		for (auto &child : node.children) {
@@ -279,8 +278,8 @@ bool DuckLakeFileListData::FilterTreeState::AddLeaves(const DuckLakeFilterNode &
 
 //! Reduce an expression to per-column filters using the combiner, which also propagates equalities
 unique_ptr<DuckLakeFilterNode> DuckLakeFileListData::CombineFilterNode(ClientContext &context,
-                                                                        MultiFilePushdownInfo &info,
-                                                                        const Expression &expr) const {
+                                                                       MultiFilePushdownInfo &info,
+                                                                       const Expression &expr) const {
 	FilterCombiner combiner(context);
 	if (combiner.AddConjuncts(expr.Copy()) == FilterResult::UNSATISFIABLE) {
 		return make_uniq<DuckLakeFilterNode>(DuckLakeFilterNodeType::MATCH_NONE);
@@ -304,9 +303,9 @@ unique_ptr<DuckLakeFilterNode> DuckLakeFileListData::CombineFilterNode(ClientCon
 }
 
 unique_ptr<DuckLakeFilterNode> DuckLakeFileListData::BuildFilterTree(ClientContext &context,
-                                                                      MultiFilePushdownInfo &info,
-                                                                      const Expression &expr,
-                                                                      FilterTreeState &state) const {
+                                                                     MultiFilePushdownInfo &info,
+                                                                     const Expression &expr,
+                                                                     FilterTreeState &state) const {
 	if (!state.VisitNode()) {
 		return nullptr;
 	}
@@ -375,9 +374,9 @@ unique_ptr<DuckLakeFilterNode> DuckLakeFileListData::BuildFilterTree(ClientConte
 }
 
 unique_ptr<MultiFileList> DuckLakeFileListData::ComplexFilterPushdown(ClientContext &context,
-                                                                       const MultiFileOptions &options,
-                                                                       MultiFilePushdownInfo &info,
-                                                                       vector<unique_ptr<Expression>> &filters) const {
+                                                                      const MultiFileOptions &options,
+                                                                      MultiFilePushdownInfo &info,
+                                                                      vector<unique_ptr<Expression>> &filters) const {
 	if (!SupportsFilterPushdown() || filters.empty()) {
 		return nullptr;
 	}
@@ -456,6 +455,136 @@ DuckLakeTableEntry &DuckLakeFileListData::GetTable() {
 	return read_info.table;
 }
 
+//! The delete file as the value a table function that reads it takes - empty if there is no delete file
+static string DeleteFileSQL(const DuckLakeFileData &delete_file) {
+	if (delete_file.path.empty()) {
+		return string();
+	}
+	OpenFileInfo delete_info(delete_file.path);
+	delete_info.extended_info = make_shared_ptr<ExtendedOpenFileInfo>();
+	auto &delete_options = delete_info.extended_info->options;
+	delete_options["file_size"] = Value::UBIGINT(delete_file.file_size_bytes);
+	if (delete_file.footer_size.IsValid()) {
+		delete_options["footer_size"] = Value::UBIGINT(delete_file.footer_size.GetIndex());
+	}
+	if (!delete_file.encryption_key.empty()) {
+		delete_options["encryption_key"] = Value::BLOB_RAW(delete_file.encryption_key);
+	}
+	if (delete_file.format == DeleteFileFormat::PUFFIN) {
+		delete_options["format"] = Value("puffin");
+	}
+	delete_options["validate_external_file_cache"] = Value::BOOLEAN(false);
+	delete_options["etag"] = Value("");
+	delete_options["last_modified"] = Value::TIMESTAMP(timestamp_t(0));
+	return delete_info.ToValue().ToSQLString();
+}
+
+//! The table function call that reads a delete file
+static string ReadDeleteFileSQL(const DuckLakeFileData &delete_file) {
+	return "ducklake_read_delete_file([" + DeleteFileSQL(delete_file) + "])";
+}
+
+void DuckLakeFileListData::AddDeleteScanOptions(const DuckLakeDeleteScanEntry &scan,
+                                                ExtendedOpenFileInfo &extended_info) const {
+	// the rows that were deleted in the snapshot range, with the snapshot that deleted them
+	auto snapshot = to_string(scan.snapshot_id.GetIndex());
+	string start_filter;
+	if (scan.start_snapshot.IsValid()) {
+		start_filter = " AND snapshot_id >= " + to_string(scan.start_snapshot.GetIndex());
+	}
+	if (scan.end_snapshot.IsValid()) {
+		start_filter += " AND snapshot_id <= " + to_string(scan.end_snapshot.GetIndex());
+	}
+	if (scan.file_deleted && scan.delete_file.path.empty()) {
+		// the file was deleted - all its rows, except for those that were deleted before or have a delete of their own
+		string inlined_rows;
+		string inlined_scanned;
+		for (auto &inlined_delete : scan.inlined_file_deletions) {
+			inlined_rows += (inlined_rows.empty() ? "" : ", ") + to_string(inlined_delete.first);
+			if (inlined_delete.second >= scan.start_snapshot.GetIndex()) {
+				inlined_scanned += (inlined_scanned.empty() ? "" : ", ") + string("(") +
+				                   to_string(inlined_delete.first) + "::BIGINT, " + to_string(inlined_delete.second) +
+				                   "::BIGINT)";
+			}
+		}
+		auto query = StringUtil::Format("SELECT row_start, row_end, bits, %s::BIGINT AS row_value FROM "
+		                                "ducklake_scan_rows([%s]",
+		                                snapshot, DeleteFileSQL(scan.previous_delete_file));
+		if (!inlined_rows.empty()) {
+			query += ", deleted_rows := [" + inlined_rows + "]";
+		}
+		query += ")";
+		if (!inlined_scanned.empty()) {
+			query += " UNION ALL SELECT row_id, row_id + 1, NULL::BIT, row_value FROM (VALUES " + inlined_scanned +
+			         ") AS inlined(row_id, row_value)";
+		}
+		extended_info.options["filter_query"] = Value(query);
+		return;
+	}
+	string deleted_rows;
+	if (!scan.delete_file.path.empty()) {
+		// partial delete - the rows of the delete file, which can carry the snapshot of each of its deletes
+		string insert_filter;
+		if (scan.insert_snapshot.IsValid()) {
+			// a row deleted in the snapshot that inserted it was never visible
+			insert_filter =
+			    " AND coalesce(snapshot_id, " + snapshot + ") <> " + to_string(scan.insert_snapshot.GetIndex());
+		}
+		auto out_of_range =
+		    StringUtil::Format("Invalid delete data - delete index read from file %s is out of range for data file %s",
+		                       scan.delete_file.path, scan.file.path);
+		deleted_rows = "SELECT CASE WHEN pos >= " + to_string(scan.row_count) + " THEN error(" +
+		               Value(out_of_range).ToSQLString() + ") ELSE pos END AS row_id, coalesce(snapshot_id, " +
+		               snapshot + ") AS row_value FROM current_deletes WHERE (snapshot_id IS NULL OR (true" +
+		               start_filter + "))" + insert_filter;
+	} else {
+		deleted_rows = "SELECT NULL::BIGINT AS row_id, NULL::BIGINT AS row_value WHERE false";
+	}
+	// inlined deletes replace the deletes of the same rows - those before the range are not part of it
+	string query;
+	if (!scan.delete_file.path.empty()) {
+		query = "WITH current_deletes AS (SELECT pos, snapshot_id FROM " + ReadDeleteFileSQL(scan.delete_file) + "), ";
+	} else {
+		query = "WITH ";
+	}
+	query += "deleted_rows AS (" + deleted_rows + ")";
+	string inlined_rows;
+	string inlined_scanned;
+	for (auto &inlined_delete : scan.inlined_file_deletions) {
+		inlined_rows += (inlined_rows.empty() ? "" : ", ") + to_string(inlined_delete.first);
+		if (inlined_delete.second >= scan.start_snapshot.GetIndex()) {
+			inlined_scanned += (inlined_scanned.empty() ? "" : ", ") + string("(") + to_string(inlined_delete.first) +
+			                   "::BIGINT, " + to_string(inlined_delete.second) + "::BIGINT)";
+		}
+	}
+	query += ", all_deletes AS (SELECT row_id, row_value FROM deleted_rows";
+	if (!inlined_rows.empty()) {
+		query += " WHERE row_id NOT IN (" + inlined_rows + ")";
+	}
+	if (!inlined_scanned.empty()) {
+		query +=
+		    " UNION ALL SELECT row_id, row_value FROM (VALUES " + inlined_scanned + ") AS inlined(row_id, row_value)";
+	}
+	query += ")";
+	query += " SELECT row_id, row_value FROM all_deletes";
+	if (!scan.previous_delete_file.path.empty()) {
+		// the deletes of the previous delete file are not new - unless the delete file has all deletes
+		query += " WHERE " +
+		         string(scan.delete_file.path.empty()
+		                    ? "false"
+		                    : "(SELECT coalesce(bool_or(snapshot_id IS NOT NULL), false) FROM current_deletes)") +
+		         " OR row_id NOT IN (SELECT CASE WHEN pos >= " + to_string(scan.row_count) + " THEN error(" +
+		         Value(StringUtil::Format("Invalid delete data - delete index read from file %s is out of range for "
+		                                  "data file %s",
+		                                  scan.previous_delete_file.path, scan.file.path))
+		             .ToSQLString() +
+		         ") ELSE pos END FROM " + ReadDeleteFileSQL(scan.previous_delete_file) + ")";
+	}
+	// every deleted row is a range of one row, with the snapshot that deleted it as its value
+	extended_info.options["filter_query"] =
+	    Value("SELECT row_id AS row_start, row_id + 1 AS row_end, NULL::BIT AS bits, row_value FROM (" + query + ")");
+}
+
 void DuckLakeFileListData::AddDeleteOptions(const DuckLakeFileListEntry &file_entry,
                                             ExtendedOpenFileInfo &extended_info) const {
 	if (file_entry.delete_file.path.empty() && file_entry.inlined_file_deletions.empty()) {
@@ -475,34 +604,13 @@ void DuckLakeFileListData::AddDeleteOptions(const DuckLakeFileListEntry &file_en
 			snapshot_filter = read_info.snapshot.snapshot_id;
 		}
 	}
-	string delete_file_sql;
-	if (!file_entry.delete_file.path.empty()) {
-		auto &delete_file = file_entry.delete_file;
-		OpenFileInfo delete_info(delete_file.path);
-		delete_info.extended_info = make_shared_ptr<ExtendedOpenFileInfo>();
-		auto &delete_options = delete_info.extended_info->options;
-		delete_options["file_size"] = Value::UBIGINT(delete_file.file_size_bytes);
-		if (delete_file.footer_size.IsValid()) {
-			delete_options["footer_size"] = Value::UBIGINT(delete_file.footer_size.GetIndex());
-		}
-		if (!delete_file.encryption_key.empty()) {
-			delete_options["encryption_key"] = Value::BLOB_RAW(delete_file.encryption_key);
-		}
-		if (delete_file.format == DeleteFileFormat::PUFFIN) {
-			delete_options["format"] = Value("puffin");
-		}
-		delete_options["validate_external_file_cache"] = Value::BOOLEAN(false);
-		delete_options["etag"] = Value("");
-		delete_options["last_modified"] = Value::TIMESTAMP(timestamp_t(0));
-		delete_file_sql = delete_info.ToValue().ToSQLString();
-	}
 	// inlined deletes apply in every snapshot
 	vector<string> inlined_rows;
 	for (auto &row : file_entry.inlined_file_deletions) {
 		inlined_rows.push_back(to_string(row));
 	}
 	// the rows of the file that are not deleted
-	auto query = StringUtil::Format("SELECT * FROM ducklake_scan_rows([%s]", delete_file_sql);
+	auto query = StringUtil::Format("SELECT * FROM ducklake_scan_rows([%s]", DeleteFileSQL(file_entry.delete_file));
 	if (snapshot_filter.IsValid()) {
 		query += StringUtil::Format(", snapshot_filter := %d", snapshot_filter.GetIndex());
 	}
@@ -546,6 +654,9 @@ OpenFileInfo DuckLakeFileListData::GetFile(idx_t i) const {
 		extended_info->options["inlined_data"] = Value::BOOLEAN(true);
 		extended_info->options["schema_version"] =
 		    Value::BIGINT(NumericCast<int64_t>(inlined_data_table.schema_version));
+		if (file_entry.committed_rows_id.IsValid()) {
+			extended_info->options["committed_rows_id"] = Value::UBIGINT(file_entry.committed_rows_id.GetIndex());
+		}
 	} else {
 		extended_info->options["file_size"] = Value::UBIGINT(file.file_size_bytes);
 		if (file.footer_size.IsValid()) {
@@ -574,9 +685,38 @@ OpenFileInfo DuckLakeFileListData::GetFile(idx_t i) const {
 		}
 		if (read_info.scan_type != DuckLakeScanType::SCAN_DELETIONS) {
 			AddDeleteOptions(file_entry, *extended_info);
+		} else if (i < delete_scans.size()) {
+			AddDeleteScanOptions(delete_scans[i], *extended_info);
 		}
 		if (file_entry.mapping_id.IsValid()) {
 			extended_info->options["mapping_id"] = Value::UBIGINT(file_entry.mapping_id.index);
+		}
+		for (auto &entry : file_entry.column_min_max) {
+			// a missing option is a statistic the file does not have
+			auto &stats = entry.second;
+			auto field_index = to_string(entry.first);
+			if (stats.has_min) {
+				extended_info->options["column_min." + field_index] = Value(stats.min);
+			}
+			if (stats.has_max) {
+				extended_info->options["column_max." + field_index] = Value(stats.max);
+			}
+			if (stats.has_contains_nan) {
+				extended_info->options["column_contains_nan." + field_index] = Value::BOOLEAN(stats.contains_nan);
+			}
+		}
+		if (file_entry.snapshot_filter_max.IsValid()) {
+			extended_info->options["snapshot_filter_max"] = Value::UBIGINT(file_entry.snapshot_filter_max.GetIndex());
+		}
+		if (file_entry.snapshot_filter_min.IsValid()) {
+			extended_info->options["snapshot_filter_min"] = Value::UBIGINT(file_entry.snapshot_filter_min.GetIndex());
+		}
+		if (!file_entry.snapshot_filter_excluded.empty()) {
+			vector<Value> excluded;
+			for (auto snapshot_id : file_entry.snapshot_filter_excluded) {
+				excluded.push_back(Value::UBIGINT(snapshot_id));
+			}
+			extended_info->options["snapshot_filter_excluded"] = Value::LIST(LogicalType::UBIGINT, std::move(excluded));
 		}
 	}
 	result.extended_info = std::move(extended_info);
@@ -720,7 +860,7 @@ void DuckLakeFileListData::ApplyLocalChanges(DuckLakeTransaction &transaction) c
 }
 
 void DuckLakeFileListData::SetScanColumns(const vector<MultiFileColumnDefinition> &global_columns,
-                                           const vector<ColumnIndex> &column_ids) const {
+                                          const vector<ColumnIndex> &column_ids) const {
 	lock_guard<mutex> l(file_lock);
 	scan_field_ids = make_uniq<unordered_set<int32_t>>();
 	for (auto &column_id : column_ids) {
@@ -814,7 +954,7 @@ void DuckLakeFileListData::GetFilesForTable() const {
 		auto file_entry = InlinedDataEntry(table);
 		auto rows = inlined_rows.find(table.table_name);
 		if (rows != inlined_rows.end()) {
-			file_entry.inlined_rows = rows->second;
+			file_entry.committed_rows_id = read_info.AddCommittedInlinedRows(rows->second);
 		}
 		files.push_back(std::move(file_entry));
 	}
@@ -866,14 +1006,6 @@ bool DuckLakeFileListData::CanUseGlobalStats() const {
 bool DuckLakeFileListData::SupportsFilterPushdown() const {
 	// a column retyped in this transaction keeps the stats written under its old type until commit
 	return read_info.scan_type == DuckLakeScanType::SCAN_TABLE && !read_info.table.ChangedColumnType();
-}
-
-bool DuckLakeFileListData::IsDeleteScan() const {
-	return read_info.scan_type == DuckLakeScanType::SCAN_DELETIONS;
-}
-
-const DuckLakeDeleteScanEntry &DuckLakeFileListData::GetDeleteScanEntry(idx_t file_idx) {
-	return delete_scans[file_idx];
 }
 
 const vector<DuckLakeFileListEntry> &DuckLakeFileListData::GetFiles() const {
