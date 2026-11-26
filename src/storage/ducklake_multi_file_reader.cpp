@@ -1,5 +1,6 @@
 #include "storage/ducklake_multi_file_list.hpp"
 #include "storage/ducklake_multi_file_reader.hpp"
+#include "storage/ducklake_deletion_snapshots.hpp"
 #include "storage/ducklake_table_entry.hpp"
 #include "storage/ducklake_catalog.hpp"
 #include "storage/ducklake_delete_filter.hpp"
@@ -341,18 +342,7 @@ DuckLakeMultiFileReader::InitializeGlobalState(ClientContext &context, const Mul
 	file_list.Cast<DuckLakeMultiFileList>().SetScanColumns(global_columns, global_column_ids);
 	file_list.Cast<DuckLakeMultiFileList>().GetFiles();
 
-	optional_idx deletion_scan_snapshot_col;
-	optional_idx deletion_scan_file_row_number_col;
-	if (read_info.scan_type == DuckLakeScanType::SCAN_DELETIONS) {
-		for (idx_t out_idx = 0; out_idx < global_column_ids.size(); out_idx++) {
-			if (global_column_ids[out_idx].GetPrimaryIndex() == COLUMN_IDENTIFIER_SNAPSHOT_ID) {
-				deletion_scan_snapshot_col = out_idx;
-				deletion_scan_file_row_number_col = global_column_ids.size();
-			}
-		}
-	}
-	return make_uniq<DuckLakeMultiFileReaderGlobalState>(file_list, deletion_scan_snapshot_col,
-	                                                     deletion_scan_file_row_number_col);
+	return make_uniq<DuckLakeMultiFileReaderGlobalState>(file_list);
 }
 
 ReaderInitializeType DuckLakeMultiFileReader::InitializeReader(MultiFileReaderData &reader_data,
@@ -618,15 +608,7 @@ ReaderInitializeType DuckLakeMultiFileReader::CreateMappingWithGlobalState(
     const DuckLakeMultiFileReaderGlobalState &global_state) {
 	NormalizeListChildNames(reader_data.reader->columns);
 
-	// a deletion scan reads the file positions to look up the snapshot of each deleted row
-	vector<ColumnIndex> extended_column_ids;
-	auto project_file_row_number = global_state.deletion_scan_file_row_number_col.IsValid();
-	if (project_file_row_number) {
-		extended_column_ids = global_column_ids;
-		extended_column_ids.emplace_back(COLUMN_IDENTIFIER_FILE_ROW_NUMBER);
-	}
-
-	const auto &column_ids_to_use = project_file_row_number ? extended_column_ids : global_column_ids;
+	const auto &column_ids_to_use = global_column_ids;
 
 	auto &extended_info = reader_data.reader->file.extended_info;
 	idx_t mapping_id;
@@ -709,59 +691,25 @@ MultiFileReaderVirtualColumnBinding DuckLakeMultiFileReader::GetVirtualColumnExp
 		}
 		auto &options = reader_data.file_to_be_opened.extended_info->options;
 		auto entry = options.find("snapshot_id");
-		if (entry == options.end()) {
-			// a NULL option is not carried by the file list
-			return MultiFileReaderVirtualColumnBinding(Value(LogicalType::BIGINT));
+		// a NULL option is not carried by the file list
+		auto default_snapshot = entry == options.end() ? Value(LogicalType::BIGINT) : entry->second;
+		auto deleted_snapshots_query = options.find("deleted_snapshots_query");
+		if (scans_deleted_rows && deleted_snapshots_query != options.end()) {
+			// the rows that were deleted in a different snapshot than the others of the file
+			auto lookup = DuckLakeDeletionSnapshots::Read(context, StringValue::Get(deleted_snapshots_query->second),
+			                                              default_snapshot);
+			if (!lookup->IsEmpty()) {
+				auto file_row_number = make_uniq<BoundReferenceExpression>(type, local_idx.GetIndex());
+				vector<column_t> column_ids;
+				column_ids.push_back(MultiFileReader::COLUMN_IDENTIFIER_FILE_ROW_NUMBER);
+				return MultiFileReaderVirtualColumnBinding(
+				    DuckLakeDeletionSnapshots::CreateExpression(std::move(lookup), std::move(file_row_number)),
+				    std::move(column_ids));
+			}
 		}
-		return MultiFileReaderVirtualColumnBinding(entry->second);
+		return MultiFileReaderVirtualColumnBinding(default_snapshot);
 	}
 	return MultiFileReader::GetVirtualColumnExpression(context, reader_data, local_columns, column_id, type, local_idx);
-}
-
-// Map a global_column_ids index to its output_chunk position by matching the expression pointer (handles
-// projection_ids reordering under filter-column removal); invalid when the column is not in the output
-static optional_idx RemapDeletionScanOutputColumn(const ExpressionExecutor &executor,
-                                                  const MultiFileReaderData &reader_data, optional_idx global_idx) {
-	if (!global_idx.IsValid() || global_idx.GetIndex() >= reader_data.expressions.size()) {
-		return optional_idx();
-	}
-	const Expression *target = reader_data.expressions[global_idx.GetIndex()].get();
-	for (idx_t out_idx = 0; out_idx < executor.expressions.size(); out_idx++) {
-		if (executor.expressions[out_idx] == target) {
-			return optional_idx(out_idx);
-		}
-	}
-	// LCOV_EXCL_START
-	return optional_idx();
-	// LCOV_EXCL_STOP
-}
-
-void DuckLakeMultiFileReader::FinalizeChunk(ClientContext &context, const MultiFileBindData &bind_data,
-                                            BaseFileReader &reader, const MultiFileReaderData &reader_data,
-                                            DataChunk &input_chunk, DataChunk &output_chunk,
-                                            ExpressionExecutor &executor,
-                                            optional_ptr<MultiFileReaderGlobalState> global_state_p) {
-	auto &global_state = global_state_p->Cast<DuckLakeMultiFileReaderGlobalState>();
-	MultiFileReader::FinalizeChunk(context, bind_data, reader, reader_data, input_chunk, output_chunk, executor,
-	                               global_state);
-
-	if (read_info.scan_type != DuckLakeScanType::SCAN_DELETIONS || !reader.deletion_filter ||
-	    !reader.deletion_filter->HasRowValues()) {
-		return;
-	}
-	// Gather snapshot_id for partial deletion files; remap the global_column_ids indices to output_chunk positions
-	auto snapshot_out = RemapDeletionScanOutputColumn(executor, reader_data, global_state.deletion_scan_snapshot_col);
-	if (!snapshot_out.IsValid()) {
-		return;
-	}
-	auto expression_idx = global_state.deletion_scan_file_row_number_col.GetIndex();
-	D_ASSERT(expression_idx < reader_data.expressions.size());
-	Vector file_row_numbers(LogicalType::BIGINT, input_chunk.size());
-	ExpressionExecutor file_row_number_executor(context, *reader_data.expressions[expression_idx]);
-	file_row_number_executor.ExecuteExpression(input_chunk, file_row_numbers);
-	// the snapshot that deleted a row is the value of the row
-	reader.deletion_filter->GatherRowValues(file_row_numbers, output_chunk.data[snapshot_out.GetIndex()],
-	                                        output_chunk.size());
 }
 
 } // namespace duckdb

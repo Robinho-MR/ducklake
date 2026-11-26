@@ -508,17 +508,19 @@ void DuckLakeFileListData::AddDeleteScanOptions(const DuckLakeDeleteScanEntry &s
 			}
 		}
 		// the rows of the previous delete file must be rows of the data file
-		auto query = StringUtil::Format("SELECT row_start, row_end, bits, %s::BIGINT AS row_value FROM "
+		auto query = StringUtil::Format("SELECT row_start, row_end, bits FROM "
 		                                "ducklake_scan_rows([%s], row_count := %d, data_file := %s",
-		                                snapshot, DeleteFileSQL(scan.previous_delete_file), scan.row_count,
+		                                DeleteFileSQL(scan.previous_delete_file), scan.row_count,
 		                                Value(scan.file.path).ToSQLString());
 		if (!inlined_rows.empty()) {
 			query += ", deleted_rows := [" + inlined_rows + "]";
 		}
 		query += ")";
 		if (!inlined_scanned.empty()) {
-			query += " UNION ALL SELECT row_id, row_id + 1, NULL::BIT, row_value FROM (VALUES " + inlined_scanned +
-			         ") AS inlined(row_id, row_value)";
+			auto inlined_query = "SELECT row_id, row_value FROM (VALUES " + inlined_scanned + ") AS inlined(row_id, row_value)";
+			query += " UNION ALL SELECT row_id, row_id + 1, NULL::BIT FROM (" + inlined_query + ")";
+			// the other rows were deleted in the snapshot of the scan
+			extended_info.options["deleted_snapshots_query"] = Value(inlined_query);
 		}
 		extended_info.options["filter_query"] = Value(query);
 		return;
@@ -582,9 +584,10 @@ void DuckLakeFileListData::AddDeleteScanOptions(const DuckLakeDeleteScanEntry &s
 		             .ToSQLString() +
 		         ") ELSE pos END FROM " + ReadDeleteFileSQL(scan.previous_delete_file) + ")";
 	}
-	// every deleted row is a range of one row, with the snapshot that deleted it as its value
+	// every deleted row is a range of one row, and the reader looks up the snapshot that deleted it
 	extended_info.options["filter_query"] =
-	    Value("SELECT row_id AS row_start, row_id + 1 AS row_end, NULL::BIT AS bits, row_value FROM (" + query + ")");
+	    Value("SELECT row_id AS row_start, row_id + 1 AS row_end, NULL::BIT AS bits FROM (" + query + ")");
+	extended_info.options["deleted_snapshots_query"] = Value(query);
 }
 
 void DuckLakeFileListData::AddDeleteOptions(const DuckLakeFileListEntry &file_entry,
