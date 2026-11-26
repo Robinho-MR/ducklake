@@ -501,8 +501,12 @@ void DuckLakeFileListData::AddDeleteOptions(const DuckLakeFileListEntry &file_en
 	for (auto &row : file_entry.inlined_file_deletions) {
 		inlined_rows.push_back(to_string(row));
 	}
-	if (file_entry.row_count > 0) {
-		// the rows of the file that are not deleted, as the bitmap of the deleted rows inverted
+	// many deletes: the bitmap of the deleted rows, inverted. Few deletes: the ranges of rows between them, which
+	// does not depend on the size of the file
+	auto row_count = file_entry.row_count;
+	bool many_deletes = row_count > 0 && (file_entry.delete_file.file_size_bytes * 32 >= row_count ||
+	                                      inlined_rows.size() * 128 >= row_count);
+	if (many_deletes) {
 		auto query = StringUtil::Format("SELECT ~deleted FROM ducklake_read_delete_bitmap([%s], row_count := %d",
 		                                delete_file_sql, file_entry.row_count);
 		if (snapshot_filter.IsValid()) {
@@ -514,7 +518,6 @@ void DuckLakeFileListData::AddDeleteOptions(const DuckLakeFileListEntry &file_en
 		extended_info.options["filter_query"] = Value(query + ")");
 		return;
 	}
-	// the number of rows of the file is not known: the rows that are not deleted, as row ids
 	vector<string> queries;
 	if (!delete_file_sql.empty()) {
 		auto query = StringUtil::Format("SELECT pos FROM ducklake_read_delete_file([%s])", delete_file_sql);
@@ -527,9 +530,12 @@ void DuckLakeFileListData::AddDeleteOptions(const DuckLakeFileListEntry &file_en
 		queries.push_back(
 		    StringUtil::Format("SELECT unnest([%s]::BIGINT[]) AS pos", StringUtil::Join(inlined_rows, ", ")));
 	}
-	extended_info.options["filter_query"] =
-	    Value(StringUtil::Format("SELECT row_id FROM file_row_ids ANTI JOIN (%s) AS deletes(pos) ON row_id = pos",
-	                             StringUtil::Join(queries, " UNION ALL ")));
+	// the rows from after a deleted row up to the next one, and the rows after the last one
+	extended_info.options["filter_query"] = Value(StringUtil::Format(
+	    "WITH deleted AS (SELECT DISTINCT pos FROM (%s)) "
+	    "SELECT coalesce(lag(pos) OVER (ORDER BY pos) + 1, 0) AS row_start, pos AS row_end FROM deleted "
+	    "UNION ALL SELECT coalesce(max(pos) + 1, 0), NULL::BIGINT FROM deleted",
+	    StringUtil::Join(queries, " UNION ALL ")));
 }
 
 OpenFileInfo DuckLakeFileListData::GetFile(idx_t i) const {
