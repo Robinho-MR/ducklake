@@ -2336,8 +2336,7 @@ string DuckLakeMetadataManager::GenerateFileListQuery(DuckLakeTableEntry &table,
 		              ", del.begin_snapshot";
 	} else {
 		select_list = "data.data_file_id, " + GetDataFileSelectList("data") +
-		              ", data.row_id_start, data.begin_snapshot, data.partial_max, data.mapping_id, "
-		              "data.record_count, " +
+		              ", data.row_id_start, data.begin_snapshot, data.partial_max, data.mapping_id, " +
 		              GetDeleteFileSelectList("del") + stats_select_list;
 	}
 
@@ -2418,7 +2417,6 @@ vector<DuckLakeFileListEntry> DuckLakeMetadataManager::GetFilesForTable(DuckLake
 			file_entry.mapping_id = MappingIndex(row.GetValue<idx_t>(col_idx));
 		}
 		col_idx++;
-		file_entry.row_count = row.GetValue<idx_t>(col_idx++);
 		file_entry.delete_file = ReadDeleteFile(table, row, col_idx, IsEncrypted());
 		for (auto &column_field_index : runtime_filter_stats_columns) {
 			DuckLakeFileColumnStats column_stats;

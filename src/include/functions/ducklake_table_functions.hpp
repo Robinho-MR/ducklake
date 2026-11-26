@@ -86,8 +86,8 @@ public:
 	static TableFunctionSet GetFunctions();
 };
 
-//! Reads the deletes of a data file as a bitmap - the rows of the delete file and a list of rows
-class DuckLakeReadDeleteBitmapFunction {
+//! The rows of a data file that are not deleted - by the delete file and a list of rows - as ranges and bitmaps
+class DuckLakeScanRowsFunction {
 public:
 	static TableFunctionSet GetFunctions();
 };

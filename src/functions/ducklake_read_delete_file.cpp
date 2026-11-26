@@ -100,40 +100,52 @@ TableFunctionSet DuckLakeReadDeleteFileFunction::GetFunctions() {
 	return set;
 }
 
-//! The bitmap function returns the rows that are deleted from a data file as a single BIT value - bit i is the row with
-//! id i. The rows are those of the delete file (the deletions up to the snapshot filter) and the listed rows
-struct DuckLakeReadDeleteBitmapData : public TableFunctionData {
+//! The scan rows function returns the rows of a data file that are not deleted, as the rows the filter query of a file
+//! is made of: (row_start, row_end, bits). The deletes are those of the delete file (up to the snapshot filter) and
+//! the listed rows. The rows are described per region of 65536 rows: a region without deletes is part of a range, a
+//! region with few deletes is the ranges between them, and a region with many deletes is a bitmap
+struct DuckLakeScanRowsData : public TableFunctionData {
 	bool has_delete_file = false;
 	DuckLakeFileData delete_file;
-	idx_t row_count = 0;
 	optional_idx snapshot_filter;
 	vector<idx_t> deleted_rows;
 };
 
-struct DuckLakeReadDeleteBitmapState : public GlobalTableFunctionState {
-	bool done = false;
+//! A piece of the rows to scan: the rows from start up to but not including end (the end of the file if end is not
+//! set), or - for a window - the rows of the region that start at start, except for the deleted rows of the window
+struct DuckLakeScanPiece {
+	idx_t start;
+	optional_idx end;
+	bool is_window = false;
+	//! The range of the sorted deleted rows that are in the window
+	idx_t deleted_begin = 0;
+	idx_t deleted_end = 0;
 };
 
-static unique_ptr<FunctionData> DuckLakeReadDeleteBitmapBind(ClientContext &context, TableFunctionBindInput &input,
-                                                             vector<LogicalType> &return_types,
-                                                             vector<Identifier> &names) {
-	auto result = make_uniq<DuckLakeReadDeleteBitmapData>();
+struct DuckLakeScanRowsState : public GlobalTableFunctionState {
+	vector<idx_t> deleted_rows;
+	vector<DuckLakeScanPiece> pieces;
+	idx_t piece_idx = 0;
+};
+
+//! The number of rows of a region, and the number of deletes in it from which it is a bitmap
+static constexpr idx_t SCAN_REGION_SIZE = 65536;
+static constexpr idx_t SCAN_REGION_BITMAP_THRESHOLD = 512;
+
+static unique_ptr<FunctionData> DuckLakeScanRowsBind(ClientContext &context, TableFunctionBindInput &input,
+                                                     vector<LogicalType> &return_types, vector<Identifier> &names) {
+	auto result = make_uniq<DuckLakeScanRowsData>();
 	auto &files = input.inputs[0];
 	if (!files.IsNull()) {
 		auto &children = ListValue::GetChildren(files);
 		if (children.size() > 1) {
-			throw InvalidInputException("ducklake_read_delete_bitmap reads at most one delete file");
+			throw InvalidInputException("ducklake_scan_rows reads at most one delete file");
 		}
 		if (!children.empty()) {
 			result->has_delete_file = true;
 			result->delete_file = ParseDeleteFile(children[0]);
 		}
 	}
-	auto row_count = input.named_parameters.find("row_count");
-	if (row_count == input.named_parameters.end() || row_count->second.IsNull()) {
-		throw InvalidInputException("ducklake_read_delete_bitmap needs the row_count of the data file");
-	}
-	result->row_count = UBigIntValue::Get(row_count->second.DefaultCastAs(LogicalType::UBIGINT));
 	auto snapshot_filter = input.named_parameters.find("snapshot_filter");
 	if (snapshot_filter != input.named_parameters.end() && !snapshot_filter->second.IsNull()) {
 		result->snapshot_filter = UBigIntValue::Get(snapshot_filter->second.DefaultCastAs(LogicalType::UBIGINT));
@@ -144,53 +156,110 @@ static unique_ptr<FunctionData> DuckLakeReadDeleteBitmapBind(ClientContext &cont
 			result->deleted_rows.push_back(UBigIntValue::Get(row.DefaultCastAs(LogicalType::UBIGINT)));
 		}
 	}
-	names.emplace_back("deleted");
+	names.emplace_back("row_start");
+	return_types.emplace_back(LogicalType::BIGINT);
+	names.emplace_back("row_end");
+	return_types.emplace_back(LogicalType::BIGINT);
+	names.emplace_back("bits");
 	return_types.emplace_back(LogicalType::BIT);
 	return std::move(result);
 }
 
-static unique_ptr<GlobalTableFunctionState> DuckLakeReadDeleteBitmapInit(ClientContext &context,
-                                                                         TableFunctionInitInput &input) {
-	return make_uniq<DuckLakeReadDeleteBitmapState>();
-}
-
-static void DuckLakeReadDeleteBitmapExecute(ClientContext &context, TableFunctionInput &input, DataChunk &output) {
-	auto &state = input.global_state->Cast<DuckLakeReadDeleteBitmapState>();
-	auto &data = input.bind_data->Cast<DuckLakeReadDeleteBitmapData>();
-	if (state.done) {
-		output.SetChildCardinality(0);
-		return;
-	}
-	state.done = true;
-	auto bitmap = StringVector::EmptyString(output.data[0], Bit::ComputeBitstringLen(data.row_count));
-	Bit::SetEmptyBitString(bitmap, data.row_count);
-	auto mark_deleted = [&](const vector<idx_t> &rows) {
-		for (auto row : rows) {
-			if (row < data.row_count) {
-				Bit::SetBit(bitmap, row, 1);
-			}
-		}
-	};
+static unique_ptr<GlobalTableFunctionState> DuckLakeScanRowsInit(ClientContext &context,
+                                                                 TableFunctionInitInput &input) {
+	auto &data = input.bind_data->Cast<DuckLakeScanRowsData>();
+	auto result = make_uniq<DuckLakeScanRowsState>();
+	auto &deleted = result->deleted_rows;
 	if (data.has_delete_file) {
 		auto scan =
 		    DuckLakeDeleteFilter::ScanDeleteFile(context, data.delete_file, optional_idx(), data.snapshot_filter);
-		mark_deleted(scan.deleted_rows);
+		deleted = std::move(scan.deleted_rows);
 	}
-	mark_deleted(data.deleted_rows);
-	bitmap.Finalize();
-	FlatVector::GetDataMutable<string_t>(output.data[0])[0] = bitmap;
-	output.SetChildCardinality(1);
+	deleted.insert(deleted.end(), data.deleted_rows.begin(), data.deleted_rows.end());
+	if (!std::is_sorted(deleted.begin(), deleted.end())) {
+		sort(deleted.begin(), deleted.end());
+	}
+	deleted.erase(std::unique(deleted.begin(), deleted.end()), deleted.end());
+
+	auto &pieces = result->pieces;
+	idx_t next_row = 0;
+	for (idx_t i = 0; i < deleted.size();) {
+		auto region_start = deleted[i] / SCAN_REGION_SIZE * SCAN_REGION_SIZE;
+		auto region_end = region_start + SCAN_REGION_SIZE;
+		idx_t end_idx = i;
+		while (end_idx < deleted.size() && deleted[end_idx] < region_end) {
+			end_idx++;
+		}
+		if (region_start > next_row) {
+			// the regions in between do not have deletes
+			pieces.push_back(DuckLakeScanPiece {next_row, optional_idx(region_start)});
+		}
+		if (end_idx - i >= SCAN_REGION_BITMAP_THRESHOLD) {
+			pieces.push_back(DuckLakeScanPiece {region_start, optional_idx(), true, i, end_idx});
+		} else {
+			// the rows between the deleted rows
+			auto row = region_start;
+			for (auto delete_idx = i; delete_idx < end_idx; delete_idx++) {
+				if (deleted[delete_idx] > row) {
+					pieces.push_back(DuckLakeScanPiece {row, optional_idx(deleted[delete_idx])});
+				}
+				row = deleted[delete_idx] + 1;
+			}
+			if (row < region_end) {
+				pieces.push_back(DuckLakeScanPiece {row, optional_idx(region_end)});
+			}
+		}
+		next_row = region_end;
+		i = end_idx;
+	}
+	// the rest of the file
+	pieces.push_back(DuckLakeScanPiece {next_row, optional_idx()});
+	return std::move(result);
 }
 
-TableFunctionSet DuckLakeReadDeleteBitmapFunction::GetFunctions() {
-	TableFunctionSet set("ducklake_read_delete_bitmap");
-	TableFunction function("ducklake_read_delete_bitmap", {LogicalType::LIST(LogicalType::ANY)},
-	                       DuckLakeReadDeleteBitmapExecute, DuckLakeReadDeleteBitmapBind,
-	                       DuckLakeReadDeleteBitmapInit);
+static void DuckLakeScanRowsExecute(ClientContext &context, TableFunctionInput &input, DataChunk &output) {
+	auto &state = input.global_state->Cast<DuckLakeScanRowsState>();
+	auto starts = FlatVector::GetDataMutable<int64_t>(output.data[0]);
+	auto ends = FlatVector::GetDataMutable<int64_t>(output.data[1]);
+	auto &end_validity = FlatVector::ValidityMutable(output.data[1]);
+	auto bitmaps = FlatVector::GetDataMutable<string_t>(output.data[2]);
+	auto &bitmap_validity = FlatVector::ValidityMutable(output.data[2]);
+	idx_t count = 0;
+	while (count < STANDARD_VECTOR_SIZE && state.piece_idx < state.pieces.size()) {
+		auto &piece = state.pieces[state.piece_idx++];
+		starts[count] = NumericCast<int64_t>(piece.start);
+		if (piece.is_window || !piece.end.IsValid()) {
+			end_validity.SetInvalid(count);
+		} else {
+			ends[count] = NumericCast<int64_t>(piece.end.GetIndex());
+		}
+		if (piece.is_window) {
+			// all rows of the region except for the deleted rows
+			auto bitmap = StringVector::EmptyString(output.data[2], Bit::ComputeBitstringLen(SCAN_REGION_SIZE));
+			Bit::SetEmptyBitString(bitmap, SCAN_REGION_SIZE);
+			// the region has no padding bits: the first row is the highest bit of the first byte after the padding byte
+			auto data = reinterpret_cast<uint8_t *>(bitmap.GetDataWriteable());
+			memset(data + 1, 0xFF, bitmap.GetSize() - 1);
+			for (auto delete_idx = piece.deleted_begin; delete_idx < piece.deleted_end; delete_idx++) {
+				auto row = state.deleted_rows[delete_idx] - piece.start;
+				data[1 + row / 8] = static_cast<uint8_t>(data[1 + row / 8] & ~(1 << (7 - row % 8)));
+			}
+			bitmap.Finalize();
+			bitmaps[count] = bitmap;
+		} else {
+			bitmap_validity.SetInvalid(count);
+		}
+		count++;
+	}
+	output.SetChildCardinality(count);
+}
+
+TableFunctionSet DuckLakeScanRowsFunction::GetFunctions() {
+	TableFunctionSet set("ducklake_scan_rows");
+	TableFunction function("ducklake_scan_rows", {LogicalType::LIST(LogicalType::ANY)}, DuckLakeScanRowsExecute,
+	                       DuckLakeScanRowsBind, DuckLakeScanRowsInit);
 	function.GetSignature().WithTypedKwargs("options", [&](TypedKwargs &options) {
-		options.Add("row_count", LogicalType::UBIGINT)
-		    .Add("snapshot_filter", LogicalType::UBIGINT)
-		    .Add("deleted_rows", LogicalType::LIST(LogicalType::UBIGINT));
+		options.Add("snapshot_filter", LogicalType::UBIGINT).Add("deleted_rows", LogicalType::LIST(LogicalType::UBIGINT));
 	});
 	set.AddFunction(std::move(function));
 	return set;
