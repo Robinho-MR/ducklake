@@ -109,6 +109,9 @@ struct DuckLakeScanRowsData : public TableFunctionData {
 	DuckLakeFileData delete_file;
 	optional_idx snapshot_filter;
 	vector<idx_t> deleted_rows;
+	//! When set, the rows of the delete file must be rows of the data file
+	optional_idx row_count;
+	string data_file;
 };
 
 //! A piece of the rows to scan: the rows from start up to but not including end (the end of the file if end is not
@@ -156,6 +159,14 @@ static unique_ptr<FunctionData> DuckLakeScanRowsBind(ClientContext &context, Tab
 			result->deleted_rows.push_back(UBigIntValue::Get(row.DefaultCastAs(LogicalType::UBIGINT)));
 		}
 	}
+	auto row_count = input.named_parameters.find("row_count");
+	if (row_count != input.named_parameters.end() && !row_count->second.IsNull()) {
+		result->row_count = UBigIntValue::Get(row_count->second.DefaultCastAs(LogicalType::UBIGINT));
+	}
+	auto data_file = input.named_parameters.find("data_file");
+	if (data_file != input.named_parameters.end() && !data_file->second.IsNull()) {
+		result->data_file = StringValue::Get(data_file->second);
+	}
 	names.emplace_back("row_start");
 	return_types.emplace_back(LogicalType::BIGINT);
 	names.emplace_back("row_end");
@@ -174,6 +185,13 @@ static unique_ptr<GlobalTableFunctionState> DuckLakeScanRowsInit(ClientContext &
 		auto scan =
 		    DuckLakeDeleteFilter::ScanDeleteFile(context, data.delete_file, optional_idx(), data.snapshot_filter);
 		deleted = std::move(scan.deleted_rows);
+		for (auto row : deleted) {
+			if (data.row_count.IsValid() && row >= data.row_count.GetIndex()) {
+				throw InvalidInputException(
+				    "Invalid delete data - delete index read from file %s is out of range for data file %s",
+				    data.delete_file.path, data.data_file);
+			}
+		}
 	}
 	deleted.insert(deleted.end(), data.deleted_rows.begin(), data.deleted_rows.end());
 	if (!std::is_sorted(deleted.begin(), deleted.end())) {
@@ -259,7 +277,10 @@ TableFunctionSet DuckLakeScanRowsFunction::GetFunctions() {
 	TableFunction function("ducklake_scan_rows", {LogicalType::LIST(LogicalType::ANY)}, DuckLakeScanRowsExecute,
 	                       DuckLakeScanRowsBind, DuckLakeScanRowsInit);
 	function.GetSignature().WithTypedKwargs("options", [&](TypedKwargs &options) {
-		options.Add("snapshot_filter", LogicalType::UBIGINT).Add("deleted_rows", LogicalType::LIST(LogicalType::UBIGINT));
+		options.Add("snapshot_filter", LogicalType::UBIGINT)
+		    .Add("deleted_rows", LogicalType::LIST(LogicalType::UBIGINT))
+		    .Add("row_count", LogicalType::UBIGINT)
+		    .Add("data_file", LogicalType::VARCHAR);
 	});
 	set.AddFunction(std::move(function));
 	return set;

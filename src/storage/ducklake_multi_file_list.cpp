@@ -507,9 +507,11 @@ void DuckLakeFileListData::AddDeleteScanOptions(const DuckLakeDeleteScanEntry &s
 				                   "::BIGINT)";
 			}
 		}
+		// the rows of the previous delete file must be rows of the data file
 		auto query = StringUtil::Format("SELECT row_start, row_end, bits, %s::BIGINT AS row_value FROM "
-		                                "ducklake_scan_rows([%s]",
-		                                snapshot, DeleteFileSQL(scan.previous_delete_file));
+		                                "ducklake_scan_rows([%s], row_count := %d, data_file := %s",
+		                                snapshot, DeleteFileSQL(scan.previous_delete_file), scan.row_count,
+		                                Value(scan.file.path).ToSQLString());
 		if (!inlined_rows.empty()) {
 			query += ", deleted_rows := [" + inlined_rows + "]";
 		}
