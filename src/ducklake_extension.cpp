@@ -57,6 +57,11 @@ static void LoadInternal(ExtensionLoader &loader) {
 	DuckLakeTableInfoFunction table_info;
 	loader.RegisterFunction(table_info);
 
+	auto read_delete_file = DuckLakeReadDeleteFileFunction::GetFunctions();
+	loader.RegisterFunction(read_delete_file);
+	auto scan_rows = DuckLakeScanRowsFunction::GetFunctions();
+	loader.RegisterFunction(scan_rows);
+
 	auto table_insertions = DuckLakeTableInsertionsFunction::GetFunctions();
 	loader.RegisterFunction(table_insertions);
 

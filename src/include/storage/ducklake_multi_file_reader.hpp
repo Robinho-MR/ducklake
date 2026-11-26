@@ -18,20 +18,9 @@ struct DuckLakeDeleteMap;
 class DuckLakeFieldData;
 
 struct DuckLakeMultiFileReaderGlobalState : public MultiFileReaderGlobalState {
-	DuckLakeMultiFileReaderGlobalState(const MultiFileList &file_list_p, optional_idx deletion_scan_snapshot_col_p,
-	                                   optional_idx deletion_scan_file_row_number_col_p)
-	    : MultiFileReaderGlobalState(deletion_scan_file_row_number_col_p.IsValid()
-	                                     ? vector<LogicalType> {LogicalType::BIGINT}
-	                                     : vector<LogicalType> {},
-	                                 file_list_p),
-	      deletion_scan_snapshot_col(deletion_scan_snapshot_col_p),
-	      deletion_scan_file_row_number_col(deletion_scan_file_row_number_col_p) {
+	explicit DuckLakeMultiFileReaderGlobalState(const MultiFileList &file_list_p)
+	    : MultiFileReaderGlobalState(vector<LogicalType> {}, file_list_p) {
 	}
-
-	//! Output position of the snapshot_id of a deletion scan in global_column_ids order
-	const optional_idx deletion_scan_snapshot_col;
-	//! Position of the appended file_row_number expression, which looks up the snapshot of each deleted row
-	const optional_idx deletion_scan_file_row_number_col;
 };
 
 struct DuckLakeMultiFileReader : public MultiFileReader {
@@ -99,10 +88,6 @@ public:
 
 	unique_ptr<MultiFileReader> Copy() const override;
 
-	void FinalizeChunk(ClientContext &context, const MultiFileBindData &bind_data, BaseFileReader &reader,
-	                   const MultiFileReaderData &reader_data, DataChunk &input_chunk, DataChunk &output_chunk,
-	                   ExpressionExecutor &executor, optional_ptr<MultiFileReaderGlobalState> global_state) override;
-
 	static vector<MultiFileColumnDefinition> ColumnsFromFieldData(const DuckLakeFieldData &field_data,
 	                                                              bool emit_key_value = false);
 	//! The columns an inlined data reader reads from a committed inlined table, false if its schema is gone
@@ -111,9 +96,6 @@ public:
 
 private:
 	shared_ptr<BaseFileReader> TryCreateInlinedDataReader(const OpenFileInfo &file);
-	//! Gather per-row snapshot_id values using the file positions of the scanned rows
-	void GatherDeletionScanSnapshots(BaseFileReader &reader, const Vector &file_row_numbers, Vector &snapshot_vector,
-	                                 idx_t count) const;
 
 private:
 	unique_ptr<MultiFileColumnDefinition> row_id_column;

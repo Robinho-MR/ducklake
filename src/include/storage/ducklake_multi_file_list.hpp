@@ -9,6 +9,7 @@
 #pragma once
 
 #include "duckdb/common/multi_file/multi_file_reader.hpp"
+#include "duckdb/common/multi_file/table_function_multi_file_list.hpp"
 #include "storage/ducklake_scan.hpp"
 #include "storage/ducklake_transaction.hpp"
 #include "storage/ducklake_metadata_info.hpp"
@@ -17,30 +18,35 @@
 
 namespace duckdb {
 
-//! The DuckLakeMultiFileList implements the MultiFileList API to allow injecting it into the regular DuckDB parquet
-//! scan
-class DuckLakeMultiFileList : public MultiFileList {
+class DuckLakeMultiFileList;
+
+//! The bind data of the DuckLake file list function: the files of a DuckLake scan, and what they are scanned with
+class DuckLakeFileListData : public TableFunctionData {
 	static constexpr const char *DUCKLAKE_TRANSACTION_LOCAL_INLINED_FILENAME =
 	    "__ducklake_inlined_transaction_local_data";
 
 public:
-	DuckLakeMultiFileList(DuckLakeFunctionInfo &read_info, vector<DuckLakeDataFile> transaction_local_files,
-	                      shared_ptr<DuckLakeInlinedData> transaction_local_data,
-	                      unique_ptr<FilterPushdownInfo> filter_info = nullptr);
-	DuckLakeMultiFileList(DuckLakeFunctionInfo &read_info, vector<DuckLakeFileListEntry> files_to_scan);
-	DuckLakeMultiFileList(DuckLakeFunctionInfo &read_info, const DuckLakeInlinedTableInfo &inlined_table);
+	DuckLakeFileListData(DuckLakeFunctionInfo &read_info, vector<DuckLakeDataFile> transaction_local_files,
+	                     shared_ptr<DuckLakeInlinedData> transaction_local_data,
+	                     unique_ptr<FilterPushdownInfo> filter_info = nullptr);
+	DuckLakeFileListData(DuckLakeFunctionInfo &read_info, vector<DuckLakeFileListEntry> files_to_scan);
+	DuckLakeFileListData(DuckLakeFunctionInfo &read_info, const DuckLakeInlinedTableInfo &inlined_table);
 
-	unique_ptr<MultiFileList> DynamicFilterPushdown(MultiFileDynamicPushdownInfo &pushdown_info) const override;
+	unique_ptr<MultiFileList> DynamicFilterPushdown(MultiFileDynamicPushdownInfo &pushdown_info) const;
 
 	unique_ptr<MultiFileList> ComplexFilterPushdown(ClientContext &context, const MultiFileOptions &options,
 	                                                MultiFilePushdownInfo &info,
-	                                                vector<unique_ptr<Expression>> &filters) const override;
+	                                                vector<unique_ptr<Expression>> &filters) const;
 
-	FileExpandResult GetExpandResult() const override;
-	idx_t GetTotalFileCount() const override;
-	unique_ptr<NodeStatistics> GetCardinality(ClientContext &context) const override;
+	idx_t GetTotalFileCount() const;
+	unique_ptr<NodeStatistics> GetCardinality(ClientContext &context) const;
 	DuckLakeTableEntry &GetTable();
-	unique_ptr<MultiFileList> Copy() const override;
+	unique_ptr<FunctionData> Copy() const override;
+	bool Equals(const FunctionData &other) const override {
+		return this == &other;
+	}
+	//! The i-th file, with the options to scan it with
+	OpenFileInfo GetFile(idx_t i) const;
 	vector<DuckLakeFileListExtendedEntry> GetFilesExtended() const;
 	const vector<DuckLakeFileListEntry> &GetFiles() const;
 	const DuckLakeFileListEntry &GetFileEntry(idx_t file_idx) const;
@@ -54,16 +60,14 @@ public:
 	bool CanUseGlobalStats() const;
 	//! Whether filters can prune files by their stats
 	bool SupportsFilterPushdown() const;
-	bool IsDeleteScan() const;
-	const DuckLakeDeleteScanEntry &GetDeleteScanEntry(idx_t file_idx);
 	static DuckLakeFileData GetDeleteData(const DuckLakeDataFile &file);
 	static DuckLakeFileData GetDeleteData(const DuckLakeDeleteFile &delete_file);
 
-protected:
-	//! Get the i-th expanded file
-	OpenFileInfo GetFile(idx_t i) const override;
-
 private:
+	//! The options that describe the deleted rows of a data file - read by the core scan
+	void AddDeleteOptions(const DuckLakeFileListEntry &file_entry, ExtendedOpenFileInfo &extended_info) const;
+	//! The options that describe the rows that were deleted from a data file - for scans of deletions
+	void AddDeleteScanOptions(const DuckLakeDeleteScanEntry &scan, ExtendedOpenFileInfo &extended_info) const;
 	void ApplyLocalChanges(DuckLakeTransaction &transaction) const;
 	void GetFilesForTable() const;
 	//! Read the committed files, and the committed inlined rows before them when each metadata query commits
@@ -130,6 +134,73 @@ private:
 	mutable vector<DuckLakeDeleteScanEntry> delete_scans;
 	//! Filter pushdown information
 	unique_ptr<FilterPushdownInfo> filter_info;
+};
+
+//! The files of a DuckLake scan - a file list that runs the DuckLake file list function (over DuckLakeFileListData)
+class DuckLakeMultiFileList : public TableFunctionMultiFileList {
+public:
+	DuckLakeMultiFileList(ClientContext &context, DuckLakeFunctionInfo &read_info,
+	                      vector<DuckLakeDataFile> transaction_local_files,
+	                      shared_ptr<DuckLakeInlinedData> transaction_local_data,
+	                      unique_ptr<FilterPushdownInfo> filter_info = nullptr);
+	DuckLakeMultiFileList(ClientContext &context, DuckLakeFunctionInfo &read_info,
+	                      vector<DuckLakeFileListEntry> files_to_scan);
+	DuckLakeMultiFileList(ClientContext &context, DuckLakeFunctionInfo &read_info,
+	                      const DuckLakeInlinedTableInfo &inlined_table);
+
+	unique_ptr<MultiFileList> DynamicFilterPushdown(MultiFileDynamicPushdownInfo &pushdown_info) const override;
+	unique_ptr<MultiFileList> ComplexFilterPushdown(ClientContext &context, const MultiFileOptions &options,
+	                                                MultiFilePushdownInfo &info,
+	                                                vector<unique_ptr<Expression>> &filters) const override;
+	FileExpandResult GetExpandResult() const override;
+	idx_t GetTotalFileCount() const override;
+	MultiFileCount GetFileCount(idx_t min_exact_count = 0) const override;
+	unique_ptr<NodeStatistics> GetCardinality(ClientContext &context) const override;
+	unique_ptr<MultiFileList> Copy() const override;
+
+	DuckLakeTableEntry &GetTable() {
+		return Data().GetTable();
+	}
+	vector<DuckLakeFileListExtendedEntry> GetFilesExtended() const {
+		return Data().GetFilesExtended();
+	}
+	const vector<DuckLakeFileListEntry> &GetFiles() const {
+		return Data().GetFiles();
+	}
+	const DuckLakeFileListEntry &GetFileEntry(idx_t file_idx) const {
+		return Data().GetFileEntry(file_idx);
+	}
+	void SetScanColumns(const vector<MultiFileColumnDefinition> &global_columns,
+	                    const vector<ColumnIndex> &column_ids) const {
+		Data().SetScanColumns(global_columns, column_ids);
+	}
+	optional_ptr<const FilterPushdownInfo> GetFilterInfo() const {
+		return Data().GetFilterInfo();
+	}
+	bool CanUseGlobalStats() const {
+		return Data().CanUseGlobalStats();
+	}
+	bool SupportsFilterPushdown() const {
+		return Data().SupportsFilterPushdown();
+	}
+	static DuckLakeFileData GetDeleteData(const DuckLakeDataFile &file) {
+		return DuckLakeFileListData::GetDeleteData(file);
+	}
+	static DuckLakeFileData GetDeleteData(const DuckLakeDeleteFile &delete_file) {
+		return DuckLakeFileListData::GetDeleteData(delete_file);
+	}
+
+protected:
+	//! All files are known as soon as the metadata is read
+	bool FileIsAvailable(idx_t i) const override {
+		return true;
+	}
+
+private:
+	DuckLakeMultiFileList(ClientContext &context, unique_ptr<DuckLakeFileListData> data);
+	DuckLakeFileListData &Data() const {
+		return GetBindData()->Cast<DuckLakeFileListData>();
+	}
 };
 
 } // namespace duckdb

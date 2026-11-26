@@ -419,8 +419,8 @@ struct DuckLakeFileListEntry {
 	set<idx_t> inlined_file_deletions;
 	//! Column min/max values for runtime filter pushdown
 	unordered_map<idx_t, DuckLakeFileColumnStats> column_min_max;
-	//! The rows of committed inlined data, when they are read before the file list
-	shared_ptr<DuckLakeCommittedInlinedRows> inlined_rows;
+	//! The id of the rows of committed inlined data, when they are read before the file list
+	optional_idx committed_rows_id;
 };
 
 struct DuckLakeDeleteScanEntry {

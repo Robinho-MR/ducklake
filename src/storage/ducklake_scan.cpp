@@ -141,7 +141,7 @@ virtual_column_map_t DuckLakeVirtualColumns(ClientContext &context, optional_ptr
 	return result;
 }
 
-vector<column_t> DuckLakeGetRowIdColumn(ClientContext &context, optional_ptr<FunctionData> bind_data) {
+vector<column_t> DuckLakeGetRowIdColumn(ClientContext &context, optional_ptr<const FunctionData> bind_data) {
 	vector<column_t> result;
 	result.emplace_back(MultiFileReader::COLUMN_IDENTIFIER_FILENAME);
 	result.emplace_back(MultiFileReader::COLUMN_IDENTIFIER_FILE_ROW_NUMBER);
@@ -292,6 +292,20 @@ shared_ptr<DuckLakeTransaction> DuckLakeFunctionInfo::GetTransaction() {
 	return result;
 }
 
+idx_t DuckLakeFunctionInfo::AddCommittedInlinedRows(shared_ptr<DuckLakeCommittedInlinedRows> rows) {
+	lock_guard<mutex> guard(committed_rows_lock);
+	committed_rows.push_back(std::move(rows));
+	return committed_rows.size() - 1;
+}
+
+shared_ptr<DuckLakeCommittedInlinedRows> DuckLakeFunctionInfo::GetCommittedInlinedRows(idx_t id) {
+	lock_guard<mutex> guard(committed_rows_lock);
+	if (id >= committed_rows.size()) {
+		throw InternalException("Unknown committed inlined rows id %d", id);
+	}
+	return committed_rows[id];
+}
+
 bool DuckLakeFunctionInfo::CanUseGlobalStats() {
 	if (scan_type != DuckLakeScanType::SCAN_TABLE) {
 		return false;
@@ -301,7 +315,7 @@ bool DuckLakeFunctionInfo::CanUseGlobalStats() {
 	       !active_transaction->GetCatalog().CatalogSnapshot();
 }
 
-void DuckLakeScanSerialize(Serializer &serializer, const optional_ptr<FunctionData> bind_data,
+void DuckLakeScanSerialize(Serializer &serializer, const optional_ptr<const FunctionData> bind_data,
                            const BoundTableFunction &function) {
 	auto &func_info = function.function_info->Cast<DuckLakeFunctionInfo>();
 	auto &catalog = func_info.table.ParentCatalog();

@@ -19,6 +19,7 @@ namespace duckdb {
 class DuckLakeMultiFileList;
 class DuckLakeTableEntry;
 class DuckLakeTransaction;
+struct DuckLakeCommittedInlinedRows;
 class Serializer;
 class Deserializer;
 
@@ -34,7 +35,7 @@ public:
 };
 
 //! Serialize/Deserialize callbacks for DuckLakeScan (used by table macro Copy)
-void DuckLakeScanSerialize(Serializer &serializer, const optional_ptr<FunctionData> bind_data,
+void DuckLakeScanSerialize(Serializer &serializer, const optional_ptr<const FunctionData> bind_data,
                            const BoundTableFunction &function);
 unique_ptr<FunctionData> DuckLakeScanDeserialize(Deserializer &deserializer, BoundTableFunction &function);
 
@@ -63,6 +64,14 @@ struct DuckLakeFunctionInfo : public TableFunctionInfo {
 
 	shared_ptr<DuckLakeTransaction> GetTransaction();
 	bool CanUseGlobalStats();
+
+	//! Keep the committed inlined rows a file list read before its files - returns the id its files carry as option
+	idx_t AddCommittedInlinedRows(shared_ptr<DuckLakeCommittedInlinedRows> rows);
+	shared_ptr<DuckLakeCommittedInlinedRows> GetCommittedInlinedRows(idx_t id);
+
+private:
+	mutex committed_rows_lock;
+	vector<shared_ptr<DuckLakeCommittedInlinedRows>> committed_rows;
 };
 
 } // namespace duckdb

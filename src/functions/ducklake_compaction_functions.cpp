@@ -747,7 +747,7 @@ DuckLakeCompactor::GenerateCompactionCommand(vector<DuckLakeCompactionFileEntry>
 	auto root = PlanRewriteScan(
 	    context, binder, table, copy_input, write_snapshot_id,
 	    [&](DuckLakeFunctionInfo &read_info) {
-		    return make_uniq<DuckLakeMultiFileList>(read_info, std::move(files_to_scan));
+		    return make_uniq<DuckLakeMultiFileList>(context, read_info, std::move(files_to_scan));
 	    },
 	    copy);
 
